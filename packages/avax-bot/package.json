@@ -1,0 +1,18 @@
+{
+  "name": "avax-bot",
+  "version": "1.0.0",
+  "description": "Avax arbitrage bot",
+  "main": "arb.ts",
+  "scripts": {
+    "run": "npx ts-node arb.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Brendan Giberson",
+  "license": "ISC",
+  "dependencies": {
+    "@pangolindex/exchange-contracts": "^1.0.2",
+    "@traderjoe-xyz/core": "^2.4.6",
+    "dotenv": "^16.0.0",
+    "ethers": "^5.6.4"
+  }
+}
