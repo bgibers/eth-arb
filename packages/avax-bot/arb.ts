@@ -1,20 +1,23 @@
 import 'dotenv/config';
-import { JoeRouterAddress, JoeFactoryAddress, joe, wavax, pangolin, PangolinFactoryAddress, savax, PangolinRouterAddress} from './config';
+import config from './config';
 import { ethers } from 'ethers';
-import { abi as PangolinPairABI } from '@pangolindex/exchange-contracts/artifacts/contracts/pangolin-core/PangolinPair.sol/PangolinPair.json';
-import { abi as PangolinFactoryABI } from '@pangolindex/exchange-contracts/artifacts/contracts/pangolin-core/PangolinFactory.sol/PangolinFactory.json';
 import { abi as PangolinRouterABI } from '@pangolindex/exchange-contracts/artifacts/contracts/pangolin-periphery/PangolinRouter.sol/PangolinRouter.json';
 
-import TraderJoeFactoryABI from '@traderjoe-xyz/core/abi/JoeFactory.json';
-import TraderJoePairABI from '@traderjoe-xyz/core/abi/JoePair.json';
 import TraderJoeRouterABI from '@traderjoe-xyz/core/abi/JoeRouter02.json';
+import { tokens } from './tokens.json';
 
 const provider = new ethers.providers.JsonRpcProvider(process.env.AVAX_RPC_URL);
-const traderJoeFactory = new ethers.Contract(JoeFactoryAddress, TraderJoeFactoryABI, provider);
-const pangolinFactory = new ethers.Contract(PangolinFactoryAddress, PangolinFactoryABI, provider);
-const joeRouter = new ethers.Contract(JoeRouterAddress, TraderJoeRouterABI, provider);
-const pngRouter = new ethers.Contract(PangolinRouterAddress, PangolinRouterABI, provider);
+const joeRouter = new ethers.Contract(config.joeRouter, TraderJoeRouterABI, provider);
+const pngRouter = new ethers.Contract(config.pngRouter, PangolinRouterABI, provider);
 
+interface ArbOp {
+  token: string;
+  symbol: string;
+  address: string;
+  joePrice: number;
+  pngPrice: number;
+  baseToken: string;
+}
 
 // An arbitrage opportunity occurs if the price of AVAX is different between the two DEXes. 
 // An arbitrageur would flash borrow AVAX from the lower priced DEX and sell it for USDT on the higher priced DEX,
@@ -24,50 +27,83 @@ const pngRouter = new ethers.Contract(PangolinRouterAddress, PangolinRouterABI, 
 // Sell AVAX on the higher priced pair for USDT
 // Pay back USDT on the lower priced pair
 // Collect profit
+// GetAmountsIn() you call this function to get figure out how BUSD you would need to get n BNB . 
+// GetAmountOut() will return how much amtOut you would get for a x amt of amtIn.
 
 /*
-  We can get the exchange rate of a pool by dividing reserve0 by reserve1 and then adding slippage
+  GetAmountsOutRes * PriceOfTokenOut = PriceOfTokenOut
+  tokenPath: [tokenIn, tokenOut]
 */
-async function lpInfoTj(coin: string) : Promise<Number> {
-    var pairAddress = traderJoeFactory.getPair(coin, wavax);
-    var joePair = new ethers.Contract(pairAddress, TraderJoePairABI, provider);
-    var reserves = await joePair.getReserves();
+async function lpInfo(tokenPath: string[], exchange: string) : Promise<number> {
+  const tokenInAmount  = '1000000000000000000';
 
-    return Number(price0) / Number(price1);
-}
+  var amtOut;
 
-async function lpInfoPangolin(coin: string) : Promise<Number> {
-  var pairAddress = pangolinFactory.getPair(coin, wavax);
-  var pngPair = new ethers.Contract(pairAddress, PangolinPairABI, provider);
+  switch (exchange) {
+    case 'joe':
+      amtOut = await joeRouter.getAmountsOut(tokenInAmount, tokenPath);
+      break;
+    case 'png':
+      amtOut = await pngRouter.getAmountsOut(tokenInAmount, tokenPath);
+      break;
+    default:
+      break;
+  }
 
-  var reserves = await pngPair.getReserves();
-  var price0 = ethers.utils.formatUnits(reserves[0], 18);
-  var price1 = ethers.utils.formatUnits(reserves[1], 18);
-
-  return Number(price0) / Number(price1);
+  return Number(ethers.utils.formatUnits(amtOut[1], 18));
 }
 
 async function calcNetProfit() {
- const gasPrice = await provider.getGasPrice();
- const readableGas = ethers.utils.formatUnits(gasPrice, "ether");
- console.log(`gas:` + readableGas);
-
+  const gasPrice = await provider.getGasPrice();
+  const readableGas = ethers.utils.formatEther(gasPrice);
+  console.log(`gas:` + readableGas);
 }
 
 async function findOps() {
-  // loop through all tokens
-  // set higher val as pool0 and lower val as pool1
-  // subtract pool0 from pool1 and then subtract gas
-  // if profit then flashswap
+}
+
+async function isProfitable(joePrice: number, pngPrice: number) {
+  return (joePrice != pngPrice && (Math.max(joePrice, pngPrice) - Math.min(joePrice, pngPrice)) > .01);
 }
 
 async function main() {
-  // for each block
   provider.on('block', async (blockNumber) => {
-    console.log(`TJ:` + await lpInfoTj(joe));
-    console.log(`PNG:` + await lpInfoPangolin(joe));
-    calcNetProfit();
+    // see if we can do this in parallel later
+    Object.keys(config.baseTokens).forEach(async key => {
+      var tokenOut = config.baseTokens[key];
+
+      tokens.forEach(async tkn => {
+        var tokenIn = tkn.address;
+        var tokenPath = [tokenIn, tokenOut];
+        
+        var joePrice = await lpInfo(tokenPath, 'joe');
+        var pngPrice = await lpInfo(tokenPath, 'png');
+
+        if (await isProfitable(joePrice, pngPrice)) {
+          // call our contract appropriately 
+          // log the pair, prices of each exchange
+          var arbOp: ArbOp = {
+            token: tkn.name,
+            symbol: tkn.symbol,
+            address: tkn.address,
+            joePrice: joePrice,
+            pngPrice: pngPrice,
+            baseToken: key
+          } ;
+          console.log(arbOp)
+        }
+      });
+    });
   });
 }
 
 main();
+
+// {
+//   token: 'Wrapped BTC',
+//   symbol: 'WBTC.e',
+//   address: '0x50b7545627a5162F82A992c33b87aDc75187B218',
+//   joePrice: 171512.7853186049,
+//   pngPrice: 13524.151932363502,
+//   baseToken: 'wavax'
+// }
