@@ -34,23 +34,26 @@ interface ArbOp {
   GetAmountsOutRes * PriceOfTokenOut = PriceOfTokenOut
   tokenPath: [tokenIn, tokenOut]
 */
-async function lpInfo(tokenPath: string[], exchange: string) : Promise<number> {
-  const tokenInAmount  = '1000000000000000000';
+async function lpInfo(tokenPath: string[], exchange: string, decimals: number) : Promise<number> {
+  const tokenInAmount  = ethers.utils.parseEther("1").toString();
 
   var amtOut;
-
-  switch (exchange) {
-    case 'joe':
-      amtOut = await joeRouter.getAmountsOut(tokenInAmount, tokenPath);
-      break;
-    case 'png':
-      amtOut = await pngRouter.getAmountsOut(tokenInAmount, tokenPath);
-      break;
-    default:
-      break;
+  try {
+    switch (exchange) {
+      case 'joe':
+        amtOut = await joeRouter.getAmountsOut(tokenInAmount, tokenPath);
+        break;
+      case 'png':
+        amtOut = await pngRouter.getAmountsOut(tokenInAmount, tokenPath);
+        break;
+      default:
+        break;
+    }
+  } catch (e: unknown) {
+    return 0;
   }
 
-  return Number(ethers.utils.formatUnits(amtOut[1], 18));
+  return Number(ethers.utils.formatUnits(amtOut[1], decimals));
 }
 
 async function calcNetProfit() {
@@ -63,6 +66,7 @@ async function findOps() {
 }
 
 async function isProfitable(joePrice: number, pngPrice: number) {
+  console.log((Math.max(joePrice, pngPrice) - Math.min(joePrice, pngPrice)))
   return (joePrice != pngPrice && (Math.max(joePrice, pngPrice) - Math.min(joePrice, pngPrice)) > .01);
 }
 
@@ -70,14 +74,16 @@ async function main() {
   provider.on('block', async (blockNumber) => {
     // see if we can do this in parallel later
     Object.keys(config.baseTokens).forEach(async key => {
+
       var tokenOut = config.baseTokens[key];
 
       tokens.forEach(async tkn => {
         var tokenIn = tkn.address;
-        var tokenPath = [tokenIn, tokenOut];
-        
-        var joePrice = await lpInfo(tokenPath, 'joe');
-        var pngPrice = await lpInfo(tokenPath, 'png');
+        var tokenPath = [tokenIn, tokenOut.address];
+        var decimals = tokenOut.decimals;
+
+        var joePrice = await lpInfo(tokenPath, 'joe', decimals);
+        var pngPrice = await lpInfo(tokenPath, 'png', decimals);
 
         if (await isProfitable(joePrice, pngPrice)) {
           // call our contract appropriately 
